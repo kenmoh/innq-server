@@ -1,5 +1,7 @@
+import os
 
 # Redis setup
+from cryptography.fernet import Fernet
 from starlette.middleware.base import BaseHTTPMiddleware
 import redis
 import json
@@ -7,6 +9,11 @@ import time
 from typing import Optional
 
 from fastapi import Request, Response
+from dotenv import load_dotenv
+
+load_dotenv()
+PG_ENCRYPTION_KEY = os.getenv("PG_ENCRYPTION_KEY")
+
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 REDIS_DB = 0
@@ -19,18 +26,20 @@ redis_client = redis.Redis(
     port=REDIS_PORT,
     db=REDIS_DB,
     password=REDIS_PASSWORD,
-    decode_responses=True  # Return strings instead of bytes
+    decode_responses=True,  # Return strings instead of bytes
 )
 
 
 # Store access and refresh tokens with user_id as the key
-def store_tokens(user_id: str, access_token: str, refresh_token: str, expires_in: int) -> None:
+def store_tokens(
+    user_id: str, access_token: str, refresh_token: str, expires_in: int
+) -> None:
     # Store token data under user ID
     user_key = f"{REDIS_PREFIX}user:{user_id}"
     token_data = {
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "expires_at": int(time.time()) + expires_in
+        "expires_at": int(time.time()) + expires_in,
     }
     redis_client.set(user_key, json.dumps(token_data))
 
@@ -41,6 +50,7 @@ def store_tokens(user_id: str, access_token: str, refresh_token: str, expires_in
     token_key = f"{REDIS_PREFIX}token:{access_token}"
     redis_client.set(token_key, user_id)
     redis_client.expire(token_key, expires_in + (7 * 24 * 60 * 60))
+
 
 # Get refresh token for a given access token
 
@@ -64,10 +74,13 @@ def get_refresh_token_for_user(access_token: str) -> Optional[str]:
     except json.JSONDecodeError:
         return None
 
+
 # Update tokens after refresh
 
 
-def store_new_tokens(user_id: str, access_token: str, refresh_token: str, expires_in: int) -> None:
+def store_new_tokens(
+    user_id: str, access_token: str, refresh_token: str, expires_in: int
+) -> None:
     # Get existing user data to find old access token
     user_key = f"{REDIS_PREFIX}user:{user_id}"
     user_data = redis_client.get(user_key)
@@ -86,6 +99,7 @@ def store_new_tokens(user_id: str, access_token: str, refresh_token: str, expire
     # Store new tokens
     store_tokens(user_id, access_token, refresh_token, expires_in)
 
+
 # Remove tokens on logout
 
 
@@ -97,6 +111,7 @@ def remove_tokens(user_id: str, access_token: str) -> None:
     # Remove user tokens
     user_key = f"{REDIS_PREFIX}user:{user_id}"
     redis_client.delete(user_key)
+
 
 # Token refresh middleware
 
@@ -124,7 +139,7 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
                             content=new_body,
                             status_code=response.status_code,
                             headers=dict(response.headers),
-                            media_type=response.media_type
+                            media_type=response.media_type,
                         )
                         return new_response
                 except:
@@ -135,13 +150,15 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
 
 
 # Store access and refresh tokens with user_id as the key
-def store_tokens(user_id: str, access_token: str, refresh_token: str, expires_in: int) -> None:
+def store_tokens(
+    user_id: str, access_token: str, refresh_token: str, expires_in: int
+) -> None:
     # Store token data under user ID
     user_key = f"{REDIS_PREFIX}user:{user_id}"
     token_data = {
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "expires_at": int(time.time()) + expires_in
+        "expires_at": int(time.time()) + expires_in,
     }
     redis_client.set(user_key, json.dumps(token_data))
 
@@ -152,6 +169,7 @@ def store_tokens(user_id: str, access_token: str, refresh_token: str, expires_in
     token_key = f"{REDIS_PREFIX}token:{access_token}"
     redis_client.set(token_key, user_id)
     redis_client.expire(token_key, expires_in + (7 * 24 * 60 * 60))
+
 
 # Get refresh token for a given access token
 
@@ -175,10 +193,13 @@ def get_refresh_token_for_user(access_token: str) -> Optional[str]:
     except json.JSONDecodeError:
         return None
 
+
 # Update tokens after refresh
 
 
-def store_new_tokens(user_id: str, access_token: str, refresh_token: str, expires_in: int) -> None:
+def store_new_tokens(
+    user_id: str, access_token: str, refresh_token: str, expires_in: int
+) -> None:
     # Get existing user data to find old access token
     user_key = f"{REDIS_PREFIX}user:{user_id}"
     user_data = redis_client.get(user_key)
@@ -196,6 +217,7 @@ def store_new_tokens(user_id: str, access_token: str, refresh_token: str, expire
 
     # Store new tokens
     store_tokens(user_id, access_token, refresh_token, expires_in)
+
 
 # Remove tokens on logout
 
@@ -215,3 +237,13 @@ def remove_tokens(user_id: str, access_token: str) -> None:
 #     if not current_user:
 #         raise HTTPException(status_code=401, detail="Not authenticated")
 #     return current_user
+
+
+def encrypt_data(data: str) -> str:
+    f = Fernet(PG_ENCRYPTION_KEY)
+    return f.encrypt(data.encode()).decode()
+
+
+def decrypt_data(data: str) -> str:
+    f = Fernet(PG_ENCRYPTION_KEY)
+    return f.decrypt(data.encode()).decode()

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import List, Optional
 from enum import Enum
 from datetime import datetime
@@ -13,8 +13,8 @@ class UserRole(str, Enum):
     WAITER = "waiter"
     CHEF = "chef"
     MANAGER = "manager"
-    LAUNDRY = 'laundry_attendant'
-    SUPER_ADMIN = 'super_admin'
+    LAUNDRY = "laundry_attendant"
+    SUPER_ADMIN = "super_admin"
 
 
 class PaymentGatewayEnum(str, Enum):
@@ -50,6 +50,12 @@ class PermissionAction(str, Enum):
 
 
 # ============= Schemas ==============
+
+
+class CurrentUser(BaseModel):
+    id: uuid.UUID
+    role: str
+
 
 class ProfileCreate(BaseModel):
     phone_number: str
@@ -149,6 +155,22 @@ class RolePermissionResponse(RolePermissionCreate):
     created_at: datetime
 
 
+# Permission Update Model
+class PermissionUpdate(BaseModel):
+    resource: PermissionResource
+    actions: List[PermissionAction]
+
+
+# Staff Update Schemas
+
+
+class StaffPermissionUpdate(BaseModel):
+    # Direct permissions to set
+    direct_permissions: Optional[List[PermissionUpdate]] = None
+    group_permissions: Optional[List[str]] = None  # Group names to add/remove
+    groups_to_remove: Optional[List[str]] = None  # Group names to remove
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     is_subscribed: bool = False
@@ -161,7 +183,23 @@ class StaffCreate(BaseModel):
     full_name: str
     role: UserRole
     permissions: RolePermissionCreate | None = None
-    permission_group: PermissionGroupCreate | None = None
+    permission_group_name: PermissionGroupCreate | None = None
+
+    @validator("permissions", pre=True, always=True)
+    def check_at_least_one_permission(cls, v, values):
+        if not v and not values.get("permission_group_name"):
+            raise ValueError(
+                "At least one of permissions or permission_group_name must be provided"
+            )
+        return v
+
+    @validator("permission_group_name", pre=True, always=True)
+    def check_at_least_one_permission_with_groups(cls, v, values):
+        if not v and not values.get("permissions"):
+            raise ValueError(
+                "At least one of permissions or permission_group_name must be provided"
+            )
+        return v
 
 
 class GuestResponse(BaseModel):
@@ -187,76 +225,23 @@ class StaffResponse(BaseModel):
     permission_group: PermissionGroupCreate | None = None
 
 
-"""
+class CompanyProfileCreate(BaseModel):
+    company_name: str
+    address: str
+    cac_reg_number: str
+    open_hours: str | None
+    logo_url: str | None
 
-{
-  "user": {
-    "id": "11111111-1111-1111-1111-111111111111",
-    "app_metadata": {
-      "provider": "email",
-      "providers": [
-        "email"
-      ]
-    },
-    "user_metadata": {},
-    "aud": "authenticated",
-    "confirmation_sent_at": "2023-02-19T00:01:51.147035Z",
-    "recovery_sent_at": null,
-    "email_change_sent_at": null,
-    "new_email": null,
-    "invited_at": null,
-    "action_link": null,
-    "email": "email@example.com",
-    "phone": "",
-    "created_at": "2023-02-19T00:01:51.142802Z",
-    "confirmed_at": "2023-02-19T00:01:51.351735Z",
-    "email_confirmed_at": "2023-02-19T00:01:51.351735Z",
-    "phone_confirmed_at": null,
-    "last_sign_in_at": "2024-06-25T19:50:31.744823Z",
-    "role": "authenticated",
-    "updated_at": "2024-06-25T19:50:31.757491Z",
-    "identities": [],
-    "factors": null,
-    "is_anonymous": false
-  },
-  "session": {
-    "provider_token": null,
-    "provider_refresh_token": null,
-    "access_token": "<ACCESS_TOKEN>",
-    "refresh_token": "<REFRESH_TOKEN>",
-    "expires_in": 3600,
-    "expires_at": 1719348631,
-    "token_type": "bearer",
-    "user": {
-      "id": "11111111-1111-1111-1111-111111111111",
-      "app_metadata": {
-        "provider": "email",
-        "providers": [
-          "email"
-        ]
-      },
-      "user_metadata": {},
-      "aud": "authenticated",
-      "confirmation_sent_at": "2023-02-19T00:01:51.147035Z",
-      "recovery_sent_at": null,
-      "email_change_sent_at": null,
-      "new_email": null,
-      "invited_at": null,
-      "action_link": null,
-      "email": "email@example.com",
-      "phone": "",
-      "created_at": "2023-02-19T00:01:51.142802Z",
-      "confirmed_at": "2023-02-19T00:01:51.351735Z",
-      "email_confirmed_at": "2023-02-19T00:01:51.351735Z",
-      "phone_confirmed_at": null,
-      "last_sign_in_at": "2024-06-25T19:50:31.744823Z",
-      "role": "authenticated",
-      "updated_at": "2024-06-25T19:50:31.757491Z",
-      "identities": [],
-      "factors": null,
-      "is_anonymous": false
-    }
-  }
-}
 
-"""
+class CompanyProfileResponse(CompanyProfileCreate):
+    id: uuid.UUID
+
+
+class PaymentGatewayCreate(BaseModel):
+    payment_gateway_api_key: str
+    payment_gateway_secret_key: str
+    payment_gateway_provider: str
+
+
+class PaymentGatewayResponse(PaymentGatewayCreate):
+    company_id: uuid.UUID

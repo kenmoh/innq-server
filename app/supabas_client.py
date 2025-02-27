@@ -11,8 +11,7 @@ load_dotenv()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/users/login")
 
 
-client: Client = create_client(
-    os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+client: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 
 def get_client():
@@ -76,10 +75,11 @@ def get_client():
 #         raise HTTPException(
 #             status_code=404, detail="User not found in users or companies table")
 
+
 def get_current_user(
     request: Request,
     token: str = Depends(oauth2_scheme),
-    supabase: Client = Depends(get_client)
+    supabase: Client = Depends(get_client),
 ) -> dict:
     if not token:
         return None  # Allow optional auth for public endpoints
@@ -96,18 +96,20 @@ def get_current_user(
 
             if not refresh_token:
                 raise HTTPException(
-                    status_code=401, detail="Session expired. Please log in again.")
+                    status_code=401, detail="Session expired. Please log in again."
+                )
 
             # Refresh the session
             refresh_response = supabase.auth.refresh_session(refresh_token)
 
             if refresh_response.error:
                 raise HTTPException(
-                    status_code=401, detail="Unable to refresh session. Please log in again.")
+                    status_code=401,
+                    detail="Unable to refresh session. Please log in again.",
+                )
 
             # Get user with the new token
-            auth_user = supabase.auth.get_user(
-                refresh_response.session.access_token)
+            auth_user = supabase.auth.get_user(refresh_response.session.access_token)
             user_id = auth_user.user.id
 
             # Store the new tokens in Redis
@@ -115,7 +117,7 @@ def get_current_user(
                 user_id,
                 refresh_response.session.access_token,
                 refresh_response.session.refresh_token,
-                refresh_response.session.expires_in
+                refresh_response.session.expires_in,
             )
 
             # Set token to the new access token to continue with the request
@@ -126,15 +128,16 @@ def get_current_user(
 
         except Exception as refresh_error:
             raise HTTPException(
-                status_code=401, detail="Invalid token and unable to refresh session")
+                status_code=401, detail="Invalid token and unable to refresh session"
+            )
 
     # Fetch from users table (staff, guests)
-    user_data = supabase.table("users").select(
-        "id, role").eq("id", user_id).execute()
+    user_data = supabase.table("users").select("id, role").eq("id", user_id).execute()
 
     # Fetch from companies table (company users)
-    company_data = supabase.table("companies").select(
-        "id, role").eq("id", user_id).execute()
+    company_data = (
+        supabase.table("companies").select("id, role").eq("id", user_id).execute()
+    )
 
     # Handle user type and return unified response
     if user_data.data and len(user_data.data) > 0:
@@ -151,12 +154,11 @@ def get_current_user(
         }
     else:
         raise HTTPException(
-            status_code=404, detail="User not found in users or companies table")
+            status_code=404, detail="User not found in users or companies table"
+        )
 
 
 def get_company_user(user: dict = Depends(get_current_user)):
-
     if user["role"] != UserRole.COMPANY:
-        raise HTTPException(
-            status_code=403, detail="Only company users allowed")
+        raise HTTPException(status_code=403, detail="Only company users allowed")
     return user

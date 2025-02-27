@@ -1,4 +1,3 @@
-
 # Redis setup
 import redis
 
@@ -15,5 +14,5 @@ redis_client = redis.Redis(
     port=REDIS_PORT,
     db=REDIS_DB,
     password=REDIS_PASSWORD,
-    decode_responses=True  # Return strings instead of bytes
+    decode_responses=True,  # Return strings instead of bytes
 )
