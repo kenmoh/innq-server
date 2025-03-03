@@ -1,3 +1,4 @@
+from cmath import phase
 import json
 from typing import List, Dict
 from fastapi import HTTPException
@@ -7,7 +8,7 @@ import uuid
 from fastapi import HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from supabase import AuthApiError, Client
-from dotenv import load_dotenv
+
 
 from app.utils.dependencies import (
     REDIS_PREFIX,
@@ -19,9 +20,9 @@ from ..schemas.user_schema import (
     CompanyProfileCreate,
     CompanyProfileResponse,
     CompanyResponse,
+    CurrentUserResponse,
     PaymentGatewayCreate,
     PaymentGatewayResponse,
-    dict,
     GroupPermissionResponse,
     GuestResponse,
     NoPostResponse,
@@ -41,10 +42,12 @@ from ..schemas.user_schema import (
     PermissionGroupCreate,
     RolePermissionCreate,
     UserRole,
+    LoginResponse
 )
 
 
-staff_role = [UserRole.CHEF, UserRole.MANAGER, UserRole.WAITER, UserRole.LAUNDRY]
+staff_role = [UserRole.CHEF, UserRole.MANAGER,
+              UserRole.WAITER, UserRole.LAUNDRY]
 
 # Initialize Redis client
 redis_client = redis.Redis(host="localhost", port=6379, db=0)
@@ -71,7 +74,8 @@ def assign_role_permissions_to_user(
                     PermissionAction.DELETE,
                 ],
             ),
-            (PermissionResource.ITEM, [PermissionAction.CREATE, PermissionAction.READ]),
+            (PermissionResource.ITEM, [
+             PermissionAction.CREATE, PermissionAction.READ]),
             (
                 PermissionResource.STOCK,
                 [PermissionAction.CREATE, PermissionAction.READ],
@@ -127,7 +131,7 @@ def assign_role_permissions_to_user(
         perm_data = {
             "user_id": user_id,
             "resource": resource.value,
-            "action": [action.value for action in actions],
+            "actions": [action.value for action in actions],
         }
         try:
             supabase.table("role_permissions").insert(perm_data).execute()
@@ -147,7 +151,7 @@ def get_user_permissions(
     # Fetch direct role permissions
     role_perms = (
         supabase.table("role_permissions")
-        .select("resource, action")
+        .select("resource, actions")
         .eq("user_id", user_id)
         .execute()
     )
@@ -155,7 +159,8 @@ def get_user_permissions(
         permissions.append(
             RolePermissionCreate(
                 resource=PermissionResource(perm["resource"]),
-                action=[PermissionAction(action) for action in perm["action"]],
+                actions=[PermissionAction(action)
+                         for action in perm["actions"]],
             )
         )
 
@@ -169,7 +174,7 @@ def get_user_permissions(
     if group_ids.data:
         group_perms = (
             supabase.table("group_permissions")
-            .select("resource, action")
+            .select("resource, actions")
             .in_("group_id", [group_id["group_id"] for group_id in group_ids.data])
             .execute()
         )
@@ -177,13 +182,14 @@ def get_user_permissions(
             permissions.append(
                 RolePermissionCreate(
                     resource=PermissionResource(perm["resource"]),
-                    action=[PermissionAction(action) for action in perm["action"]],
+                    actions=[PermissionAction(action)
+                             for action in perm["actions"]],
                 )
             )
 
     # Remove duplicates by converting to dict and back to list
     permissions_dict = {
-        (permission.resource, tuple(sorted(permission.action))): permission
+        (permission.resource, tuple(sorted(permission.actions))): permission
         for permission in permissions
     }
     return list(permissions_dict.values())
@@ -220,11 +226,12 @@ def login_user(supabase: Client, user: OAuth2PasswordRequestForm):
         response.session.expires_in,
     )
 
-    return {
-        "access_token": response.session.access_token,
-        "token_type": "bearer",
-        "expires_in": response.session.expires_in,
-    }
+    return LoginResponse(
+        id=response.user.id,
+        access_token=response.session.access_token,
+        refresh_token=response.session.refresh_token,
+        role=response.user.role
+    )
 
 
 def logout_user(token: str, supabase: Client):
@@ -259,7 +266,8 @@ def create_guest_user(supabase: Client, user: UserCreate) -> GuestResponse:
     }
     new_user = supabase.table("users").insert(user_data).execute()
 
-    assign_role_permissions_to_user(supabase, auth_response.user.id, UserRole.GUEST)
+    assign_role_permissions_to_user(
+        supabase, auth_response.user.id, UserRole.GUEST)
 
     permissions = get_user_permissions(supabase, auth_response.user.id)
 
@@ -283,7 +291,8 @@ def create_company_user(supabase: Client, user: UserCreate) -> CompanyResponse:
     user_data = {"id": auth_response.user.id}
     supabase.table("companies").insert(user_data).execute()
 
-    assign_role_permissions_to_user(supabase, auth_response.user.id, UserRole.COMPANY)
+    assign_role_permissions_to_user(
+        supabase, auth_response.user.id, UserRole.COMPANY)
 
     permissions = get_user_permissions(supabase, auth_response.user.id)
 
@@ -298,16 +307,16 @@ def create_staff_user(
     supabase: Client, user: StaffCreate, current_user: dict
 ) -> StaffResponse:
     # Create staff user in Supabase auth
-
+    cache_key = f"current_user:{current_user['id']}"
     company_profile = (
         supabase.table("companies")
-        .select("id")
+        .select("id, company_name")
         .eq("id", current_user["id"])
         .single()
         .execute()
     )
 
-    if not company_profile:
+    if not company_profile.data['company_name']:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Please update your profile."
         )
@@ -318,7 +327,8 @@ def create_staff_user(
         )
 
         if not auth_response.user:
-            raise HTTPException(status_code=400, detail="Failed to create user")
+            raise HTTPException(
+                status_code=400, detail="Failed to create user")
 
         # Insert into users table
         user_data = {
@@ -327,18 +337,21 @@ def create_staff_user(
             "role": user.role,
             "company_id": current_user["id"],
             "full_name": user.full_name,
-            "permissions": user.role_permissions,
+            # "permissions": user.permissions,
         }
         new_user = supabase.table("users").insert(user_data).execute()
+
+        if new_user:
+            redis_client.delete(cache_key)
 
         if user.permissions:
             for perm in user.permissions:
                 perm_data = {
-                    "id": str(uuid.uuid4()),
                     "user_id": auth_response.user.id,
-                    "resource": perm["resource"],
-                    "action": perm["actions"],
+                    "resource": perm.resource,
+                    "actions": perm.actions,
                 }
+
                 supabase.table("role_permissions").insert(perm_data).execute()
 
         if user.permission_group_name:
@@ -360,7 +373,8 @@ def create_staff_user(
                     "user_id": str(auth_response.user.id),
                     "group_id": str(group_id),
                 }
-                supabase.table("user_permission_groups").insert(group_data).execute()
+                supabase.table("user_permission_groups").insert(
+                    group_data).execute()
 
         permissions = get_user_permissions(supabase, auth_response.user.id)
 
@@ -372,9 +386,36 @@ def create_staff_user(
             permissions=permissions,
         )
     except AuthApiError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+def get_current_loged_in_user(supabase: Client, current_user: dict):
+    # Create a cache key based on the user ID
+    cache_key = f"current_user:{current_user['id']}"
+
+    # Check if data is in cache
+    cached_data = redis_client.get(cache_key)
+    if cached_data:
+        return json.loads(cached_data)
+
+    # If not in cache, fetch from Supabase
+    user = supabase.auth.get_user()
+
+    # Create the response object
+    user_data = {
+        "id": user.user.id,
+        "email": user.user.email,
+        "phone": user.user.phone,
+    }
+
+    # Cache the result (with an optional expiration time, e.g., 3600 seconds = 1 hour)
+    redis_client.set(cache_key, json.dumps(user_data), ex=3600)
+
+    return CurrentUserResponse(**user_data)
 
 
 def get_company_staff(supabase: Client, current_user: dict) -> list[StaffResponse]:
@@ -394,7 +435,8 @@ def get_company_staff(supabase: Client, current_user: dict) -> list[StaffRespons
     )
 
     # Store the result in cache
-    redis_client.set(cache_key, json.dumps(staff.data), ex=3600)  # Cache for 1 hour
+    redis_client.set(cache_key, json.dumps(
+        staff.data), ex=3600)  # Cache for 1 hour
 
     return staff.data
 
@@ -402,7 +444,8 @@ def get_company_staff(supabase: Client, current_user: dict) -> list[StaffRespons
 def create_no_post(
     supabase: Client, no_post: NoPostCreate, current_user: dict
 ) -> NoPostResponse:
-    data = {"company_id": current_user["id"], "no_post_list": no_post.no_post_list}
+    data = {"company_id": current_user["id"],
+            "no_post_list": no_post.no_post_list}
     response = supabase.table("no_post_list").insert(data).execute()
     return NoPostResponse(**response.data[0])
 
@@ -468,7 +511,8 @@ def create_permission_group(
         "name": group.name,
         "description": group.description,
     }
-    group_response = supabase.table("permission_groups").insert(group_data).execute()
+    group_response = supabase.table(
+        "permission_groups").insert(group_data).execute()
     group_id = group_response.data[0]["id"]
 
     permissions = []
@@ -476,9 +520,10 @@ def create_permission_group(
         perm_data = {
             "group_id": group_id,
             "resource": perm.resource,
-            "action": perm.action,
+            "actions": perm.actions,
         }
-        perm_response = supabase.table("group_permissions").insert(perm_data).execute()
+        perm_response = supabase.table(
+            "group_permissions").insert(perm_data).execute()
         permissions.append(GroupPermissionResponse(**perm_response.data[0]))
 
     return PermissionGroupResponse(**group_response.data[0], permissions=permissions)
@@ -490,7 +535,7 @@ def assign_role_permission(
     data = {
         "user_id": user_id,
         "resource": permission.resource,
-        "action": permission.action,
+        "actions": permission.actions,
     }
     response = supabase.table("role_permissions").insert(data).execute()
     return RolePermissionResponse(**response.data[0])
@@ -537,8 +582,8 @@ def update_staff_permissions(
                 "id": str(uuid.uuid4()),
                 "user_id": str(staff_id),
                 "resource": perm.resource.value,
-                "action": [action.value for action in perm.actions],
-                "created_at": datetime.now().isoformat(),
+                "actions": [action.value for action in perm.actions],
+
             }
             supabase.table("role_permissions").insert(perm_data).execute()
 
@@ -594,18 +639,18 @@ def update_staff_permissions(
     )
 
 
-def create_company_profile(
+def update_company_profile(
     supabase: Client, current_user: dict, data: CompanyProfileCreate
 ) -> CompanyProfileResponse:
     company_data = {
-        "id": current_user["id"],
         "company_name": data.company_name,
-        "address": data.company_name,
-        "cac_reg_number": data.company_name,
-        "open_hours": data.company_name,
-        "logo_url": data.company_name,
+        "address": data.address,
+        "cac_reg_number": data.cac_reg_number,
+        "opening_hours": data.opening_hours,
+        "logo_url": data.logo_url,
     }
-    response = supabase.table("companies").insert(company_data).execute()
+    response = supabase.table("companies").update(
+        company_data).eq('id', current_user['id']).execute()
 
     return CompanyProfileResponse(**response.data[0])
 
@@ -619,7 +664,8 @@ def add_payment_gateway(
         "payment_gateway_secret_key": encrypt_data(data.payment_gateway_secret_key),
         "payment_gateway_provider": data.payment_gateway_provider,
     }
-    response = supabase.table("payment_gateways").insert(company_data).execute()
+    response = supabase.table("payment_gateways").insert(
+        company_data).execute()
 
     print(response)
     print(response.data)

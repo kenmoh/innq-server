@@ -150,25 +150,25 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
 
 
 # Store access and refresh tokens with user_id as the key
-def store_tokens(
-    user_id: str, access_token: str, refresh_token: str, expires_in: int
-) -> None:
-    # Store token data under user ID
-    user_key = f"{REDIS_PREFIX}user:{user_id}"
-    token_data = {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": int(time.time()) + expires_in,
-    }
-    redis_client.set(user_key, json.dumps(token_data))
+# def store_tokens(
+#     user_id: str, access_token: str, refresh_token: str, expires_in: int
+# ) -> None:
+#     # Store token data under user ID
+#     user_key = f"{REDIS_PREFIX}user:{user_id}"
+#     token_data = {
+#         "access_token": access_token,
+#         "refresh_token": refresh_token,
+#         "expires_at": int(time.time()) + expires_in,
+#     }
+#     redis_client.set(user_key, json.dumps(token_data))
 
-    # Set expiration based on token lifetime + some buffer (e.g., 7 days)
-    redis_client.expire(user_key, expires_in + (7 * 24 * 60 * 60))
+#     # Set expiration based on token lifetime + some buffer (e.g., 7 days)
+#     redis_client.expire(user_key, expires_in + (7 * 24 * 60 * 60))
 
-    # Create lookup from access token to user ID
-    token_key = f"{REDIS_PREFIX}token:{access_token}"
-    redis_client.set(token_key, user_id)
-    redis_client.expire(token_key, expires_in + (7 * 24 * 60 * 60))
+#     # Create lookup from access token to user ID
+#     token_key = f"{REDIS_PREFIX}token:{access_token}"
+#     redis_client.set(token_key, user_id)
+#     redis_client.expire(token_key, expires_in + (7 * 24 * 60 * 60))
 
 
 # Get refresh token for a given access token

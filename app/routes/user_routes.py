@@ -8,6 +8,7 @@ from ..schemas.user_schema import (
     CompanyProfileCreate,
     CompanyProfileResponse,
     CompanyResponse,
+    CurrentUserResponse,
     GuestResponse,
     PaymentGatewayCreate,
     PaymentGatewayResponse,
@@ -24,6 +25,7 @@ from ..schemas.user_schema import (
     PermissionGroupResponse,
     RolePermissionCreate,
     RolePermissionResponse,
+    LoginResponse
 )
 from ..services import user_services
 
@@ -35,8 +37,8 @@ user_router = APIRouter(prefix="/api/v1/users", tags=["User"])
 async def login_user(
     user: OAuth2PasswordRequestForm = Depends(),
     supabase: Client = Depends(supabas_client.get_client),
-):
-    user_services.login_user(supabase=supabase, user=user)
+) -> LoginResponse:
+    return user_services.login_user(supabase=supabase, user=user)
 
 
 @user_router.post("/logout", status_code=status.HTTP_200_OK)
@@ -81,6 +83,19 @@ async def create_staff_user(
 
 
 @user_router.get(
+    "/me",
+    response_model=CurrentUserResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_current_user(
+    supabase: Client = Depends(supabas_client.get_client),
+    current_user=Depends(supabas_client.get_current_user),
+):
+
+    return user_services.get_current_loged_in_user(supabase=supabase, current_user=current_user)
+
+
+@user_router.get(
     "/company-staff-users",
     response_model=list[StaffResponse],
     status_code=status.HTTP_200_OK,
@@ -92,17 +107,17 @@ async def company_staff_user(
     return user_services.get_company_staff(supabase=supabase, current_user=current_user)
 
 
-@user_router.post(
+@user_router.put(
     "/company-profile",
     response_model=CompanyProfileResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def company_staff_user(
     data: CompanyProfileCreate,
     supabase: Client = Depends(supabas_client.get_client),
     current_user: dict = Depends(supabas_client.get_company_user),
 ):
-    return user_services.create_company_profile(
+    return user_services.update_company_profile(
         supabase=supabase, current_user=current_user, data=data
     )
 

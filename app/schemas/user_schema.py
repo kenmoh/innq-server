@@ -1,8 +1,9 @@
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, validator
 from typing import List, Optional
 from enum import Enum
 from datetime import datetime
 import uuid
+
 
 # ============= Enums ==============
 
@@ -13,8 +14,8 @@ class UserRole(str, Enum):
     WAITER = "waiter"
     CHEF = "chef"
     MANAGER = "manager"
-    LAUNDRY = "laundry_attendant"
-    SUPER_ADMIN = "super_admin"
+    LAUNDRY = 'laundry_attendant'
+    SUPER_ADMIN = 'super_admin'
 
 
 class PaymentGatewayEnum(str, Enum):
@@ -51,10 +52,26 @@ class PermissionAction(str, Enum):
 
 # ============= Schemas ==============
 
-
 class CurrentUser(BaseModel):
     id: uuid.UUID
     role: str
+
+
+class UserType(BaseModel):
+    name: str
+
+
+class UserTypeResponse(UserType):
+    id: int
+
+
+class NavItem(BaseModel):
+    path_name: str
+    path: str
+
+
+class NavItemResponse(NavItem):
+    id: int
 
 
 class ProfileCreate(BaseModel):
@@ -119,34 +136,9 @@ class QRCodeResponse(QRCodeCreate):
     updated_at: datetime
 
 
-class GroupPermissionCreate(BaseModel):
-    resource: PermissionResource
-    action: list[PermissionAction] = []
-
-
-class GroupPermissionResponse(GroupPermissionCreate):
-    id: uuid.UUID
-    group_id: uuid.UUID
-    created_at: datetime
-
-
-class PermissionGroupCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    permissions: List[GroupPermissionCreate] = []
-
-
-class PermissionGroupResponse(PermissionGroupCreate):
-    id: uuid.UUID
-    company_id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-    permissions: List[GroupPermissionResponse]
-
-
 class RolePermissionCreate(BaseModel):
     resource: PermissionResource
-    action: list[PermissionAction] = []
+    actions: list[PermissionAction] = []
 
 
 class RolePermissionResponse(RolePermissionCreate):
@@ -159,7 +151,6 @@ class RolePermissionResponse(RolePermissionCreate):
 class PermissionUpdate(BaseModel):
     resource: PermissionResource
     actions: List[PermissionAction]
-
 
 # Staff Update Schemas
 
@@ -182,24 +173,7 @@ class StaffCreate(BaseModel):
     password: str
     full_name: str
     role: UserRole
-    permissions: RolePermissionCreate | None = None
-    permission_group_name: PermissionGroupCreate | None = None
-
-    @validator("permissions", pre=True, always=True)
-    def check_at_least_one_permission(cls, v, values):
-        if not v and not values.get("permission_group_name"):
-            raise ValueError(
-                "At least one of permissions or permission_group_name must be provided"
-            )
-        return v
-
-    @validator("permission_group_name", pre=True, always=True)
-    def check_at_least_one_permission_with_groups(cls, v, values):
-        if not v and not values.get("permissions"):
-            raise ValueError(
-                "At least one of permissions or permission_group_name must be provided"
-            )
-        return v
+    permissions: list[RolePermissionCreate]
 
 
 class GuestResponse(BaseModel):
@@ -221,27 +195,71 @@ class StaffResponse(BaseModel):
     full_name: str
     role: UserRole
     company_id: uuid.UUID
-    permissions: RolePermissionCreate | None = None
-    permission_group: PermissionGroupCreate | None = None
+    permissions: list[RolePermissionCreate] = []
 
 
 class CompanyProfileCreate(BaseModel):
     company_name: str
     address: str
     cac_reg_number: str
-    open_hours: str | None
+    opening_hours: str | None
     logo_url: str | None
 
 
 class CompanyProfileResponse(CompanyProfileCreate):
     id: uuid.UUID
+    company_name: str
+    address: str
+    cac_reg_number: str
+    opening_hours: str | None = None
+    logo_url: str | None = None
 
 
-class PaymentGatewayCreate(BaseModel):
-    payment_gateway_api_key: str
-    payment_gateway_secret_key: str
-    payment_gateway_provider: str
+class LoginResponse(BaseModel):
+    id: str
+    access_token: str
+    refresh_token: str
+    role: str
 
 
-class PaymentGatewayResponse(PaymentGatewayCreate):
-    company_id: uuid.UUID
+class CurrentUserResponse(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    phone: str | None = None
+
+
+"""
+
+{
+  "user": {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "app_metadata": {
+      "provider": "email",
+      "providers": []
+    },
+    "user_metadata": {},
+    "aud": "authenticated",
+    "confirmation_sent_at": "2023-02-19T00:01:51.147035Z",
+    "recovery_sent_at": "2024-07-21T22:20:00.366959Z",
+    "email_change_sent_at": null,
+    "new_email": null,
+    "new_phone": null,
+    "invited_at": null,
+    "action_link": null,
+    "email": "email@example.com",
+    "phone": "",
+    "created_at": "2023-02-19T00:01:51.142802Z",
+    "confirmed_at": "2023-02-19T00:01:51.351735Z",
+    "email_confirmed_at": "2023-02-19T00:01:51.351735Z",
+    "phone_confirmed_at": null,
+    "last_sign_in_at": "2024-07-24T22:24:57.642878Z",
+    "role": "authenticated",
+    "updated_at": "2024-07-24T22:24:57.650021Z",
+    "identities": [],
+    "is_anonymous": false,
+    "factors": null
+  }
+}
+
+
+"""
